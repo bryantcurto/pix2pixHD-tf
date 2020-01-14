@@ -183,148 +183,55 @@ def define_model(opt):
     ''' Defines the pix2pixHD model. Returns inputs, outputs and a dict of all the keras models used. 
         The dict is used for loading/saving models and hence the keras models must contain all trainable parameters. '''
 
-    # Scale 0 - Max Resolution, Scale 1 - Half Resolution, Scale 2 - Quarter Resolution
-    start_scale = 1 if opt.phase == 'coarse' else 0
-
-    label_channels = 4 if opt.use_instmaps else 3
-    target_channels = 3
-
-    label_shapes = []
-    target_shapes = []
-    for i in range(3):
-        # Image format: (Height, Width, Channels)
-        s = (opt.image_dim[1] // (2 ** i), opt.image_dim[0] // (2 ** i))
-        
-        label_shapes.append(s + (label_channels,))
-        target_shapes.append(s + (target_channels,))
-    
     learning_rate = tf.placeholder(tf.float32, name="learning_rate")
+    input_real = tf.placeholder(tf.float32, (None,) + OUTPUT_SHAPE, name="real")
+    input_label = tf.placeholder(tf.float32, (None,) + INPUT_SHAPE, name="label")
 
-    real_scales = [None] * 3
-    label_scales = [None] * 3
-    gen_scales = [None] * 3
-    discriminators = [None] * 3
-    coarse_image = coarse_feature_map = fine_image = None
+    with tf.name_scope("Generator"):
+        generator = define_global_generator(INPUT_SHAPE, OUTPUT_SHAPE[-1], reflection_padding=opt.reflect_padding)
+    input_fake, _ = generator(input_label, training=True)
 
-    for i in range(start_scale, 3):
-        with tf.name_scope("scale_%d" % (i)):
-            if i == start_scale:    # Define placeholders
-                input_real = tf.placeholder(tf.float32, (None,) + target_shapes[start_scale], name="real")
-                input_label = tf.placeholder(tf.float32, (None,) + label_shapes[start_scale], name="label")
-                real_scales[i] = input_real
-                label_scales[i] = input_label
-            else:                   # Create downsampled scales
-                with tf.name_scope("real"):
-                    real_scales[i] = downsample(real_scales[start_scale], i-start_scale)
-                with tf.name_scope("label"):
-                    label_scales[i] = downsample(label_scales[start_scale], i-start_scale)
+    # Pass real and generated images to discriminator
+    with tf.name_scope("Discriminator"):
+        discriminator = define_patch_discriminator(INPUT_SHAPE, OUTPUT_SHAPE)
+    with tf.name_scope("real_activations"):
+        real_activations = discriminator([input_real, input_label], training=True)
+    with tf.name_scope("gen_activations"):
+        gen_activations = discriminator([input_fake, input_label], training=True)
 
-    # Create coarse generator
-    with tf.name_scope("coarse_generator"):
-        coarse_generator = define_global_generator(label_shapes[1], target_channels, reflection_padding=opt.reflect_padding)
-
-    # Create coarse image
-    coarse_image, coarse_feature_map = coarse_generator(label_scales[1], training=True)
-    gen_scales[1] = coarse_image
-
-    if 'fine' in opt.phase:
-        # Create fine generator
-        with tf.name_scope("fine_generator"):
-            shape2 = coarse_generator.output_shape[1][1:]
-            fine_generator = define_enhancer_generator(label_shapes[0], shape2, target_channels, reflection_padding=opt.reflect_padding)
-
-        # Create fine image
-        fine_image = fine_generator([label_scales[0], coarse_feature_map], training=True)
-        gen_scales[0] = fine_image
-    else:
-        fine_generator = None
-
-    for i in range(start_scale+1, 3):
-        gen_scales[i] = downsample(gen_scales[start_scale], i-start_scale)
-
-    generator_total_loss = 0
-    discriminator_total_loss = 0
-
-    # Discriminate each scale
-    for i in range(start_scale, 3):
-        with tf.name_scope("scale_%d" % i):
-            # Define discriminators
-            with tf.name_scope("discriminator"):
-                disc = define_patch_discriminator(label_shapes[i], target_shapes[i])
-                discriminators[i] = disc
-
-            def get_losses(generated_img):
-                with tf.name_scope("real_activations"):
-                    real_activations = disc([real_scales[i], label_scales[i]], training=True)
-                with tf.name_scope("gen_activations"):
-                    gen_activations = disc([generated_img, label_scales[i]], training=True)
-                
-                with tf.name_scope("generator_gan_loss"):
-                    gen_gan_loss = generator_gan_loss(gen_activations[-1], lsgan=opt.lsgan)
-                with tf.name_scope("generator_fm_loss"):
-                    gen_fm_loss = generator_feature_matching_loss(gen_activations, real_activations)
-
-                with tf.name_scope("discriminator_loss"):
-                    disc_loss = discriminator_loss(real_activations[-1], gen_activations[-1], lsgan=opt.lsgan)
-
-                return gen_gan_loss, gen_fm_loss, disc_loss
-
-            losses = get_losses(gen_scales[i])
-            generator_total_loss += losses[0] * opt.gan_weight
-            generator_total_loss += losses[1] * opt.fm_weight
-            discriminator_total_loss += losses[2]
+    # Compute losses
+    with tf.name_scope("generator_gan_loss"):
+        g_loss = generator_gan_loss(gen_activations[-1], lsgan=opt.lsgan)
+    with tf.name_scope("discriminator_loss"):
+        d_loss = discriminator_loss(real_activations[-1], gen_activations[-1], lsgan=opt.lsgan)
 
     optim = tf.train.AdamOptimizer(learning_rate, 0.5)
 
     # Apparently this is needed or batch_norm parameters will not update when optimizing
     extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(extra_update_ops):
-        coarse_gen_optimizer = fine_gen_optimizer = None
+        gen_optimizer = optim.minimize(g_loss, var_list=generator.variables)
+        disc_optimizer = optim.minimize(d_loss, var_list=discriminator.variables)
 
-        if 'coarse' in opt.phase:
-            coarse_gen_optimizer = optim.minimize(generator_total_loss, var_list=coarse_generator.variables)
-        if 'fine' in opt.phase:
-            fine_gen_optimizer = optim.minimize(generator_total_loss, var_list=fine_generator.variables)
-
-        disc_variables = [v for d in discriminators if d is not None for v in d.variables]
-        disc_optimizer = optim.minimize(discriminator_total_loss, var_list=disc_variables)
-    
     # Summaries
-    scalar_summaries = [tf.summary.scalar('generator_total_loss', generator_total_loss),
-                        tf.summary.scalar('discriminator_total_loss', discriminator_total_loss)]
+    scalar_summaries = [tf.summary.scalar('generator_loss', g_loss),
+                        tf.summary.scalar('discriminator_loss', d_loss)]
 
-    image_summaries = [tf.summary.image('real', input_real), tf.summary.image('coarse', coarse_image)]
-    if opt.use_instmaps:
-        image_summaries += [tf.summary.image('label', input_label[:, :, :, :-1]), 
-                            tf.summary.image('edge_map', input_label[:, :, :, -1:])]
-    else:
-        image_summaries.append(tf.summary.image('label', input_label))
-
-    if 'fine' in opt.phase:
-        image_summaries.append(tf.summary.image('fine', fine_image))
+    image_summaries = [tf.summary.image('real', input_real), tf.summary.image('fake', input_fake)]
+    label_tmp = tf.dtypes.cast(tf.expand_dims(tf.dtypes.cast(tf.argmax(input_label[:, :, :, :-1], axis=-1), tf.uint8), -1), tf.float32)
+    image_summaries += [tf.summary.image('label', tf.dtypes.cast(255 * (label_tmp / tf.math.reduce_max(label_tmp)), tf.uint8)),
+                        tf.summary.image('edge_map', input_label[:, :, :, -1:])]
 
     inputs = {  'images': input_real, 
                 'labels': input_label, 
                 'lr': learning_rate}
 
-    outputs = { 'output_scales': gen_scales,
-                'coarse_optimizer': coarse_gen_optimizer,
-                'fine_optimizer': fine_gen_optimizer,
+    outputs = { 'output_scales': input_fake,
+                'gen_optimizer': gen_optimizer,
                 'disc_optimizer': disc_optimizer,
                 'summary': tf.summary.merge(scalar_summaries),
                 'image_summary': tf.summary.merge(image_summaries)}
 
-    
-    # Create a dict containing all keras models (for saving/loading).
-
-    model_dict = {'coarse_generator': coarse_generator}
-    if 'fine' in opt.phase:
-        model_dict['fine_generator'] = fine_generator
-
-    for i, d in enumerate(discriminators):
-        if d == None:
-            continue
-        disc_name = 'discriminator%d' % i
-        model_dict[disc_name] = d
-
+    model_dict = {'generator': generator, 'discriminator': discriminator}
     return inputs, outputs, model_dict
+

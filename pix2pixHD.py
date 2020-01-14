@@ -1,3 +1,5 @@
+import sys
+import json
 import tensorflow as tf
 import numpy as np
 import os
@@ -8,16 +10,14 @@ from PIL import Image
 from options import Options
 
 opt = Options().opt
+print "OPTS", opt
 timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d--%Hh%Mm%Ss")
 
 def get_model_paths(d):
     ''' Given a directory containing saved models, returns a dict of paths to each model. '''
     path_dict = {}
-    path_dict["coarse_generator"] = os.path.join(d, "coarse_generator.h5")
-    path_dict["fine_generator"] = os.path.join(d, "fine_generator.h5")
-    for i in range(3):
-        disc_name = "discriminator%d" % i
-        path_dict[disc_name] = os.path.join(d, disc_name + ".h5")
+    path_dict["generator"] = os.path.join(d, "generator.h5")
+    path_dict["discriminator"] = os.path.join(d, "discriminator.h5")
     return path_dict
 
 def get_load_dir(model_dir, subpath):
@@ -76,9 +76,21 @@ def train(training_dataset, eval_dataset):
     tf.reset_default_graph()
 
     inputs, outputs, model_dict = models.define_model(opt)
+    print "=================== Generator Start ======================"
+    gen_json = json.loads(model_dict['generator'].to_json())
+    for layer_json in gen_json['config']['layers']:
+        print ">>", layer_json
+    print "==================== Generator End ======================="
+    print "=================== Discriminator Start ======================"
+    dis_json = json.loads(model_dict['discriminator'].to_json())
+    for layer_json in dis_json['config']['layers']:
+        print ">>", layer_json
+    print "==================== Discriminator End ======================="
+    sys.stdout.flush()
 
     iterator = training_dataset.make_one_shot_iterator()
     next_element = iterator.get_next()
+
     eval_iterator = eval_dataset.make_one_shot_iterator()
     next_eval_element = eval_iterator.get_next()
 
@@ -103,11 +115,7 @@ def train(training_dataset, eval_dataset):
 
         if opt.mode == 'train':
 
-            ops = ['disc_optimizer']
-            if 'coarse' in opt.phase:
-                ops.append('coarse_optimizer')
-            if 'fine' in opt.phase:
-                ops.append('fine_optimizer') 
+            ops = ['disc_optimizer', 'gen_optimizer']
             
             if training_steps % opt.summary_freq == 0:
                 ops.append('summary')

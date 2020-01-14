@@ -1,15 +1,24 @@
+# -*- coding: utf-8 -*-
+import sys
 import tensorflow as tf
 import numpy as np
+
+CROP_SHAPE = (256, 256)
+INPUT_SHAPE = CROP_SHAPE + (35 + 1,) # 35 labels, 1 boundary map
+OUTPUT_SHAPE = CROP_SHAPE + (3,) # RGB image
 
 # Weight Initializers
 conv_init = tf.random_normal_initializer(0, 0.02)
 batchnorm_init = tf.random_normal_initializer(1.0, 0.02)
 
 # Applies reflection padding to an image_batch
+refl_padding_num = 0
 def reflection_pad(image_batch, pad):
+    global refl_padding_num
     paddings = [[0, 0], [pad, pad], [pad, pad], [0, 0]]
-    return tf.keras.layers.Lambda(lambda x: tf.pad(x, paddings, mode='REFLECT'))(image_batch)
-
+    rval = tf.keras.layers.Lambda(lambda x: tf.pad(x, paddings, mode='REFLECT'), name='refl_padding_%d' % refl_padding_num)(image_batch)
+    refl_padding_num += 1
+    return rval
 # A thin wrapper around conv2D that applies reflection_padding when required
 def conv2D(img, k, f, s, reflect_pad):
     pad_mode = 'valid' if reflect_pad else 'same'
@@ -19,6 +28,7 @@ def conv2D(img, k, f, s, reflect_pad):
 
 # Downsamples the image i times.
 def downsample(img, i):
+    raise RuntimeError('No average pooling!')
     return tf.layers.average_pooling2d(img, 2 ** i, 2 ** i)
 
 def c7s1(x, k, activation, reflect_pad=True):    # 7×7 Convolution-InstanceNorm-Activation with k filters
@@ -30,14 +40,14 @@ def c7s1(x, k, activation, reflect_pad=True):    # 7×7 Convolution-InstanceNorm
 def d(x, k, reflect_pad=True):       # 3×3 Convolution-InstanceNorm-ReLU with k filters
     x = conv2D(x, k, 3, 2, reflect_pad=reflect_pad)
     x = tf.keras.layers.BatchNormalization(axis=3, epsilon=1e-5, momentum=0.1, gamma_initializer=batchnorm_init)(x, training=True)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    x = tf.keras.layers.ReLU()(x)
     return x
 
 def R(x, k, reflect_pad=True):       # Residual block with 2 3×3 Convolution layers with k filters.
     y = x
     y = conv2D(y, k, 3, 1, reflect_pad=reflect_pad)
     y = tf.keras.layers.BatchNormalization(axis=3, epsilon=1e-5, momentum=0.1, gamma_initializer=batchnorm_init)(y, training=True)
-    y = tf.keras.layers.LeakyReLU(alpha=0.2)(y)
+    y = tf.keras.layers.ReLU()(y)
     y = conv2D(y, k, 3, 1, reflect_pad=reflect_pad)
     y = tf.keras.layers.BatchNormalization(axis=3, epsilon=1e-5, momentum=0.1, gamma_initializer=batchnorm_init)(y, training=True)
     y = tf.keras.layers.Add()([x, y])
@@ -46,7 +56,7 @@ def R(x, k, reflect_pad=True):       # Residual block with 2 3×3 Convolution la
 def u(x, k):       # 3×3 Transposed Convolution-InstanceNorm-ReLU layer with k filters.
     x = tf.keras.layers.Conv2DTranspose(k, (3, 3), strides=(2, 2), padding='same', kernel_initializer=conv_init)(x)
     x = tf.keras.layers.BatchNormalization(axis=3, epsilon=1e-5, momentum=0.1, gamma_initializer=batchnorm_init)(x, training=True)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    x = tf.keras.layers.ReLU()(x)
     return x
 
 
@@ -82,29 +92,32 @@ def generator_feature_matching_loss(gen_activations, real_activations):
 def define_global_generator(input_label_shape, output_channels, reflection_padding=True):
     ''' Define the coarse 'global' generator. '''
 
-    down_layers = [64, 128, 256, 256]
-    residual_layers = [256] * 9
-    up_layers = [128, 128, 64, 32]
+    down_layers = [128, 256, 512, 1024]
+    residual_layers = [1024] * 9
+    up_layers = [512, 256, 128, 64]
 
     input_label = tf.keras.Input(shape=input_label_shape)
 
-    result = c7s1(input_label, 16, 'relu', reflect_pad=reflection_padding)
-    
-    for k in down_layers:
-        result = d(result, k, reflect_pad=reflection_padding)
+    result = c7s1(input_label, 64, 'relu', reflect_pad=reflection_padding)
+
+    for i, k in enumerate(down_layers):
+        result = d(result, k, reflect_pad=False)
     for k in residual_layers:
         result = R(result, k, reflect_pad=reflection_padding)
     for k in up_layers:
         result = u(result, k)
 
     last_feature_map = result
-    result = c7s1(result, output_channels, 'tanh', reflect_pad=reflection_padding)
+    #result = c7s1(result, output_channels, 'tanh', reflect_pad=reflection_padding)
+    result = conv2D(result, output_channels, 7, 1, reflect_pad=reflection_padding)
+    result = tf.keras.layers.Activation('tanh')(result)
     
     return tf.keras.Model(inputs=input_label, outputs=[result, last_feature_map])
 
 def define_enhancer_generator(input_label_shape, coarse_input_shape, output_channels, reflection_padding=True):
     ''' Define the fine 'enhancer' generator. '''
 
+    raise RuntimeError("define_enhancer_generator?")
     input_label = tf.keras.Input(shape=input_label_shape)    
     coarse_feature_map = tf.keras.Input(shape=coarse_input_shape)
 
@@ -125,9 +138,9 @@ def define_enhancer_generator(input_label_shape, coarse_input_shape, output_chan
 
 def define_patch_discriminator(label_shape, target_shape):
     
-    def conv(units):
+    def conv(units, stride=(2, 2)):
         initializer = tf.random_normal_initializer(0, 0.02)
-        return tf.keras.layers.Conv2D(units, (4, 4), strides=(2, 2), padding='valid', kernel_initializer=initializer)
+        return tf.keras.layers.Conv2D(units, (4, 4), strides=stride, padding='valid', kernel_initializer=initializer)
 
     def batchnorm():
         initializer = tf.random_normal_initializer(1.0, 0.02)
@@ -136,7 +149,7 @@ def define_patch_discriminator(label_shape, target_shape):
     def leaky_relu():
         return tf.keras.layers.LeakyReLU(alpha=0.2)
 
-    conv_units = [128, 256, 512]
+    conv_units = [(128, (2,2)), (256, (2,2)), (512, (1,1))]
     label_img = tf.keras.Input(shape=label_shape)
     target_img = tf.keras.Input(shape=target_shape)
 
@@ -148,13 +161,18 @@ def define_patch_discriminator(label_shape, target_shape):
     result = leaky_relu()(result)
     layers.append(result)
     
-    for k in conv_units:
-        result = conv(k)(result)
+    for i, (filters, stride) in enumerate(conv_units):
+        result = conv(filters, stride)(result)
         result = batchnorm()(result)
+        if 0 == i:
+            print "!!!!!!! WARNING: USING BATCH NORM !!!!!!!!"
+            print "PyTorch impl uses InstanceNormalization, but we are using batch size of 1 so."
+            sys.stdout.flush()
         result = leaky_relu()(result)
         layers.append(result)
     
-    result = conv(1)(result)
+    result = conv(1, stride=(1,1))(result)
+    print "!!!! WARNING !!!!! NOT USING SIGMOID"
     result = tf.keras.layers.Lambda(lambda x: tf.reshape(tf.reduce_mean(tf.layers.flatten(x), 1), (-1, 1)))(result)
     layers.append(result)
 

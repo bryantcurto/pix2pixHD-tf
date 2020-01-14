@@ -188,8 +188,8 @@ if __name__ == '__main__':
         opt.output_dir = "output"
 
     image_size = opt.image_dim
-    if opt.phase == 'coarse':
-        image_size = [opt.image_dim[0] // 2, opt.image_dim[1] // 2]
+    #if opt.phase == 'coarse':
+    #    image_size = [opt.image_dim[0] // 2, opt.image_dim[1] // 2]
 
     if opt.mode == "train":
         tf.gfile.MakeDirs(opt.log_dir)

@@ -18,7 +18,7 @@ class Options:
                                                     "Put '<ModelSubfolder>[/<CheckpointNumber>]' to load from a specific checkpoint."
                                                     "Put 'False' to start training afresh.")
 
-        ap.add_argument("--image_dim", type=int, default=[1024, 1024], nargs=3, help="width, height of images - input images are resized to this size.")
+        ap.add_argument("--image_dim", type=int, default=[1024, 1024], nargs=2, help="width, height of images - input images are resized to this size.")
         ap.add_argument("--steps", type=int, default=100000, help="number of training steps to run.")
 
         ap.add_argument("--trace", action="store_true", help="turn on full tensorflow tracing - used for debugging.")

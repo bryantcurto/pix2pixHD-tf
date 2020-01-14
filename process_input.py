@@ -1,3 +1,4 @@
+from __future__ import print_function
 import tensorflow as tf
 import os
 
@@ -16,10 +17,10 @@ def decode_image(image_encoded, channels=3):
     image_decoded = tf.image.convert_image_dtype(image_decoded, tf.float32)
     return image_decoded
 
-def resize_and_rescale(image, image_size):
+def resize_and_rescale(image, image_size, callbacks=[]):
     scaled_shape = tf.convert_to_tensor([image_size[1], image_size[0]])
     image_scaled = tf.image.resize_images(image, scaled_shape)
-    image_scaled = image_scaled * 2 - 1
+    #image_scaled = image_scaled * 2 - 1
     return image_scaled
 
 def get_instmap_edges(t):
@@ -42,6 +43,8 @@ def create_dataset(files, image_folder, image_dim, batch_size, use_instmaps, shu
 
     assert(len(files) > 0)
     print(files)
+    import sys
+    sys.stdout.flush()
 
     dataset = tf.data.Dataset.from_tensor_slices(files)
 
@@ -52,39 +55,44 @@ def create_dataset(files, image_folder, image_dim, batch_size, use_instmaps, shu
     dataset = dataset.repeat()
     dataset = dataset.prefetch(4)
 
-    def tfrecord_parser(record):
-        keys_to_features = {
-            "real/filename": tf.FixedLenFeature((), tf.string, default_value=""),
-            "real/encoded": tf.FixedLenFeature((), tf.string, default_value=""),
-            "pose/filename": tf.FixedLenFeature((), tf.string, default_value=""),
-            "pose/encoded": tf.FixedLenFeature((), tf.string, default_value="")
-        }
-        if use_instmaps:
-            keys_to_features["instmap/filename"] = tf.FixedLenFeature((), tf.string, default_value="")
-            keys_to_features["instmap/encoded_img"] = tf.FixedLenFeature((), tf.string, default_value="")
-        
-        parsed = tf.parse_single_example(record, keys_to_features)
+    #def tfrecord_parser(record):
+    #    keys_to_features = {
+    #        "real/filename": tf.FixedLenFeature((), tf.string, default_value=""),
+    #        "real/encoded": tf.FixedLenFeature((), tf.string, default_value=""),
+    #        "pose/filename": tf.FixedLenFeature((), tf.string, default_value=""),
+    #        "pose/encoded": tf.FixedLenFeature((), tf.string, default_value="")
+    #    }
+    #    if use_instmaps:
+    #        keys_to_features["instmap/filename"] = tf.FixedLenFeature((), tf.string, default_value="")
+    #        keys_to_features["instmap/encoded_img"] = tf.FixedLenFeature((), tf.string, default_value="")
+    #
+    #    parsed = tf.parse_single_example(record, keys_to_features)
 
-        # Perform additional preprocessing on the parsed data.
-        label_image = resize_and_rescale(decode_image(parsed["pose/encoded"]), image_dim)
-        target_image = resize_and_rescale(decode_image(parsed["real/encoded"]), image_dim)
-        if use_instmaps:
-            instmap_processed = decode_image(parsed["instmap/encoded_img"], 1)
-            instmap_processed = get_instmap_edges(instmap_processed)
-            instmap_processed = resize_and_rescale(instmap_processed, image_dim)
-            label_image = tf.concat([label_image, instmap_processed], axis=3)
+    #    # Perform additional preprocessing on the parsed data.
+    #    label_image = resize_and_rescale(decode_image(parsed["pose/encoded"], 1), image_dim)
+    #    target_image = resize_and_rescale(decode_image(parsed["real/encoded"]), image_dim)
+    #    if use_instmaps:
+    #        instmap_processed = decode_image(parsed["instmap/encoded_img"], 1)
+    #        instmap_processed = get_instmap_edges(instmap_processed)
+    #        instmap_processed = resize_and_rescale(instmap_processed, image_dim)
+    #        label_image = tf.concat([label_image, instmap_processed], axis=3)
 
-        return label_image, target_image
+    #    return label_image, target_image
 
     def image_folder_parser(filenames):
-        label_image = resize_and_rescale(decode_image(tf.read_file(filenames[0])), image_dim)
+        label_image = resize_and_rescale(tf.image.decode_jpeg(tf.read_file(filenames[0]), channels=1), image_dim)
+        label_image = tf.dtypes.cast(label_image, tf.uint8) # cast to uint8 for converting to one-hot encoding
+        #tf.print('label image', type(label_image), label_image.shape, tf.reduce_min(label_image), tf.reduce_max(label_image))
+        label_image = tf.dtypes.cast(tf.one_hot(tf.reshape(label_image, tf.shape(label_image)[:-1]), 35), tf.float32)
         target_image = resize_and_rescale(decode_image(tf.read_file(filenames[1])), image_dim)
+        #tf.print('target image', type(target_image), target_image.shape, tf.reduce_min(target_image), tf.reduce_max(target_image))
 
         if use_instmaps:
             instmap_filename = filenames[2]
             instmap_processed = decode_image(tf.read_file(instmap_filename), 1)
-            instmap_processed = get_instmap_edges(instmap_processed)
+            #instmap_processed = get_instmap_edges(instmap_processed)
             instmap_processed = resize_and_rescale(instmap_processed, image_dim)
+            #tf.print('instance map', type(instmap_processed), instmap_processed.shape, tf.reduce_min(instmap_processed), tf.reduce_max(instmap_processed))
             label_image = tf.concat([label_image, instmap_processed], axis=2)
 
         return label_image, target_image
@@ -113,7 +121,7 @@ def create_traineval_dataset(dataset_dir, image_dim, batch_size, use_instmaps, d
         print("Loading images from: '%s'" % dataset_dir)
         data_folders = get_training_data_folders(use_instmaps)
         training_files, eval_files = [[get_all_files(os.path.join(dataset_dir, y)) for y in x] for x in data_folders]
-        
+
         training_dataset = create_dataset(training_files, True, image_dim, batch_size, use_instmaps, len(training_files[0]))
         eval_dataset = create_dataset(eval_files, True, image_dim, batch_size, use_instmaps, len(eval_files[0]))
     else:
@@ -127,63 +135,65 @@ def create_traineval_dataset(dataset_dir, image_dim, batch_size, use_instmaps, d
     return training_dataset, eval_dataset
 
 def create_inference_dataset(dataset_dir, image_dim, batch_size, use_instmaps):
-    # Detect if data is in image folder or tfrecord format
-    image_folder = False
-    filenames = tf.gfile.Glob(os.path.join(dataset_dir, '*.tfrecord'))
-    if len(filenames) == 0:
-        image_folder = True
-        if use_instmaps:        
-            label_files = get_all_files(os.path.join(dataset_dir, 'instmaps'))
-            instmap_files = get_all_files(os.path.join(dataset_dir, 'instmaps'))
-            filenames = zip(label_files, instmap_files)
-        else:
-            filenames = get_all_files(dataset_dir)
-
-    print(filenames)
-    assert(len(filenames) > 0)
-
-    def tfrecord_parser(record):
-        keys_to_features = {
-            "real/filename": tf.FixedLenFeature((), tf.string, default_value=""),
-            "real/encoded": tf.FixedLenFeature((), tf.string, default_value=""),
-            "pose/filename": tf.FixedLenFeature((), tf.string, default_value=""),
-            "pose/encoded": tf.FixedLenFeature((), tf.string, default_value="")
-        }
-        if use_instmaps:
-            keys_to_features["instmap/filename"] = tf.FixedLenFeature((), tf.string, default_value="")
-            keys_to_features["instmap/encoded_img"] = tf.FixedLenFeature((), tf.string, default_value="")
-        
-        parsed = tf.parse_single_example(record, keys_to_features)
-
-        # Perform additional preprocessing on the parsed data.
-        label_image = resize_and_rescale(decode_image(parsed["pose/encoded"]), image_dim)
-        if use_instmaps:
-            instmap_processed = decode_image(parsed["instmap/encoded_img"], 1)
-            instmap_processed = get_instmap_edges(instmap_processed)
-            instmap_processed = resize_and_rescale(instmap_processed, image_dim)
-            label_image = tf.concat([label_image, instmap_processed], axis=3)
-
-        return label_image, parsed["pose/filename"]
-
-    def image_folder_parser(filenames):
-        label_filename = filenames[0] if use_instmaps else filenames
-        label_image = resize_and_rescale(decode_image(tf.read_file(label_filename)), image_dim)
-        if use_instmaps:
-            label_filename = filenames[0]
-            instmap_filename = filenames[1]
-            instmap_processed = decode_image(tf.read_file(instmap_filename), 1)
-            instmap_processed = get_instmap_edges(instmap_processed)
-            instmap_processed = resize_and_rescale(instmap_processed, image_dim)
-            label_image = tf.concat([label_image, instmap_processed], axis=2)
-        return label_image, label_filename
-
-    dataset = tf.data.Dataset.from_tensor_slices(filenames)
-    if image_folder:
-        dataset = dataset.map(image_folder_parser)
-    else:
-        dataset = dataset.apply(tf.data.experimental.parallel_interleave(tf.data.TFRecordDataset, cycle_length=4))
-        dataset = dataset.map(tfrecord_parser)
-
-    dataset = dataset.batch(batch_size)
-
-    return dataset
+    pass
+#    # Detect if data is in image folder or tfrecord format
+#    image_folder = False
+#    filenames = tf.gfile.Glob(os.path.join(dataset_dir, '*.tfrecord'))
+#    if len(filenames) == 0:
+#        image_folder = True
+#        if use_instmaps:
+#            label_files = get_all_files(os.path.join(dataset_dir, 'instmaps'))
+#            instmap_files = get_all_files(os.path.join(dataset_dir, 'instmaps'))
+#            filenames = zip(label_files, instmap_files)
+#        else:
+#            filenames = get_all_files(dataset_dir)
+#
+#    print(filenames)
+#    assert(len(filenames) > 0)
+#
+#    def tfrecord_parser(record):
+#        keys_to_features = {
+#            "real/filename": tf.FixedLenFeature((), tf.string, default_value=""),
+#            "real/encoded": tf.FixedLenFeature((), tf.string, default_value=""),
+#            "pose/filename": tf.FixedLenFeature((), tf.string, default_value=""),
+#            "pose/encoded": tf.FixedLenFeature((), tf.string, default_value="")
+#        }
+#        if use_instmaps:
+#            keys_to_features["instmap/filename"] = tf.FixedLenFeature((), tf.string, default_value="")
+#            keys_to_features["instmap/encoded_img"] = tf.FixedLenFeature((), tf.string, default_value="")
+#
+#        parsed = tf.parse_single_example(record, keys_to_features)
+#
+#        # Perform additional preprocessing on the parsed data.
+#        label_image = resize_and_rescale(decode_image(parsed["pose/encoded"]), image_dim)
+#        if use_instmaps:
+#            instmap_processed = decode_image(parsed["instmap/encoded_img"], 1)
+#            instmap_processed = get_instmap_edges(instmap_processed)
+#            instmap_processed = resize_and_rescale(instmap_processed, image_dim)
+#            instmap_processed = tf.one_hot(instmap_processed, 35)
+#            label_image = tf.concat([label_image, instmap_processed], axis=3)
+#
+#        return label_image, parsed["pose/filename"]
+#
+#    def image_folder_parser(filenames):
+#        label_filename = filenames[0] if use_instmaps else filenames
+#        label_image = resize_and_rescale(decode_image(tf.read_file(label_filename)), image_dim)
+#        if use_instmaps:
+#            label_filename = filenames[0]
+#            instmap_filename = filenames[1]
+#            instmap_processed = decode_image(tf.read_file(instmap_filename), 1)
+#            instmap_processed = get_instmap_edges(instmap_processed)
+#            instmap_processed = resize_and_rescale(instmap_processed, image_dim)
+#            label_image = tf.concat([label_image, instmap_processed], axis=2)
+#        return label_image, label_filename
+#
+#    dataset = tf.data.Dataset.from_tensor_slices(filenames)
+#    if image_folder:
+#        dataset = dataset.map(image_folder_parser)
+#    else:
+#        dataset = dataset.apply(tf.data.experimental.parallel_interleave(tf.data.TFRecordDataset, cycle_length=4))
+#        dataset = dataset.map(tfrecord_parser)
+#
+#    dataset = dataset.batch(batch_size)
+#
+#    return dataset

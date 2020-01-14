@@ -205,13 +205,11 @@ def define_model(opt):
     with tf.name_scope("discriminator_loss"):
         d_loss = discriminator_loss(real_activations[-1], gen_activations[-1], lsgan=opt.lsgan)
 
-    optim = tf.train.AdamOptimizer(learning_rate, 0.5)
-
     # Apparently this is needed or batch_norm parameters will not update when optimizing
     extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(extra_update_ops):
-        gen_optimizer = optim.minimize(g_loss, var_list=generator.variables)
-        disc_optimizer = optim.minimize(d_loss, var_list=discriminator.variables)
+        gen_optimizer = tf.train.AdamOptimizer(learning_rate, 0.5).minimize(g_loss, var_list=generator.variables)
+        disc_optimizer = tf.train.AdamOptimizer(learning_rate, 0.5).minimize(d_loss, var_list=discriminator.variables)
 
     # Summaries
     scalar_summaries = [tf.summary.scalar('generator_loss', g_loss),

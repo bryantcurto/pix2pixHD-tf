@@ -110,7 +110,7 @@ def define_global_generator(input_label_shape, output_channels, reflection_paddi
     last_feature_map = result
     #result = c7s1(result, output_channels, 'tanh', reflect_pad=reflection_padding)
     result = conv2D(result, output_channels, 7, 1, reflect_pad=reflection_padding)
-    result = tf.keras.layers.Activation('tanh')(result)
+    result = tf.keras.layers.Activation('sigmoid')(result)
     
     return tf.keras.Model(inputs=input_label, outputs=[result, last_feature_map])
 
@@ -172,8 +172,7 @@ def define_patch_discriminator(label_shape, target_shape):
         layers.append(result)
     
     result = conv(1, stride=(1,1))(result)
-    print "!!!! WARNING !!!!! NOT USING SIGMOID"
-    result = tf.keras.layers.Lambda(lambda x: tf.reshape(tf.reduce_mean(tf.layers.flatten(x), 1), (-1, 1)))(result)
+    result = tf.keras.layers.Activation('sigmoid')(result)
     layers.append(result)
 
     return tf.keras.Model(inputs=[label_img, target_img], outputs=layers)

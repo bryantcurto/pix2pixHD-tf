@@ -117,19 +117,20 @@ def define_global_generator(input_label_shape, output_channels, reflection_paddi
 def define_enhancer_generator(input_label_shape, coarse_input_shape, output_channels, reflection_padding=True):
     ''' Define the fine 'enhancer' generator. '''
 
-    raise RuntimeError("define_enhancer_generator?")
     input_label = tf.keras.Input(shape=input_label_shape)    
     coarse_feature_map = tf.keras.Input(shape=coarse_input_shape)
 
-    residual_layers = [32] * 3
+    residual_layers = [64] * 3
 
-    result = c7s1(input_label, 16, 'relu', reflect_pad=reflection_padding)
-    result = d(result, 32, reflect_pad=reflection_padding)
+    result = c7s1(input_label, 32, 'relu', reflect_pad=reflection_padding)
+    result = d(result, 64, reflect_pad=False)
     result = tf.keras.layers.Add()([result, coarse_feature_map])
     for k in residual_layers:
         result = R(result, k, reflect_pad=reflection_padding)
-    result = u(result, 16)
-    result = c7s1(result, output_channels, 'tanh', reflect_pad=reflection_padding)
+    result = u(result, 32)
+    #result = c7s1(result, output_channels, 'tanh', reflect_pad=reflection_padding)
+    result = conv2D(result, output_channels, 7, 1, reflect_pad=reflection_padding)
+    result = tf.keras.layers.Activation('sigmoid')(result)
 
     return tf.keras.Model(inputs=[input_label, coarse_feature_map], outputs=result)
 

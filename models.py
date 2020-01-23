@@ -11,6 +11,15 @@ OUTPUT_SHAPE = CROP_SHAPE + (3,) # RGB image
 conv_init = tf.random_normal_initializer(0, 0.02)
 batchnorm_init = tf.random_normal_initializer(1.0, 0.02)
 
+instance_norm_num = 0
+def instance_norm(x, *args, **kwargs):
+	global instance_norm_num
+	rval = tf.keras.layers.Lambda(
+		lambda z: tf.contrib.layers.instance_norm(z, *args, **kwargs),
+		name='instance_norm_%d' % instance_norm_num)(x)
+	instance_norm_num += 1
+	return rval
+
 # Applies reflection padding to an image_batch
 refl_padding_num = 0
 def reflection_pad(image_batch, pad):
@@ -33,29 +42,29 @@ def downsample(img, i):
 
 def c7s1(x, k, activation, reflect_pad=True):    # 7×7 Convolution-InstanceNorm-Activation with k filters
     x = conv2D(x, k, 7, 1, reflect_pad=reflect_pad)
-    x = tf.keras.layers.BatchNormalization(axis=3, epsilon=1e-5, momentum=0.1, gamma_initializer=batchnorm_init)(x, training=True)
+    x = instance_norm(x, epsilon=1e-5)
     x = tf.keras.layers.Activation(activation)(x)
     return x
 
 def d(x, k, reflect_pad=True):       # 3×3 Convolution-InstanceNorm-ReLU with k filters
     x = conv2D(x, k, 3, 2, reflect_pad=reflect_pad)
-    x = tf.keras.layers.BatchNormalization(axis=3, epsilon=1e-5, momentum=0.1, gamma_initializer=batchnorm_init)(x, training=True)
+    x = instance_norm(x, epsilon=1e-5)
     x = tf.keras.layers.ReLU()(x)
     return x
 
 def R(x, k, reflect_pad=True):       # Residual block with 2 3×3 Convolution layers with k filters.
     y = x
     y = conv2D(y, k, 3, 1, reflect_pad=reflect_pad)
-    y = tf.keras.layers.BatchNormalization(axis=3, epsilon=1e-5, momentum=0.1, gamma_initializer=batchnorm_init)(y, training=True)
+    y = instance_norm(y, epsilon=1e-5)
     y = tf.keras.layers.ReLU()(y)
     y = conv2D(y, k, 3, 1, reflect_pad=reflect_pad)
-    y = tf.keras.layers.BatchNormalization(axis=3, epsilon=1e-5, momentum=0.1, gamma_initializer=batchnorm_init)(y, training=True)
+    y = instance_norm(y, epsilon=1e-5)
     y = tf.keras.layers.Add()([x, y])
     return y
 
 def u(x, k):       # 3×3 Transposed Convolution-InstanceNorm-ReLU layer with k filters.
     x = tf.keras.layers.Conv2DTranspose(k, (3, 3), strides=(2, 2), padding='same', kernel_initializer=conv_init)(x)
-    x = tf.keras.layers.BatchNormalization(axis=3, epsilon=1e-5, momentum=0.1, gamma_initializer=batchnorm_init)(x, training=True)
+    x = instance_norm(x, epsilon=1e-5)
     x = tf.keras.layers.ReLU()(x)
     return x
 

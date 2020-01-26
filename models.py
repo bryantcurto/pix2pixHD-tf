@@ -2,6 +2,7 @@
 import sys
 import tensorflow as tf
 import numpy as np
+from instancenormalization import InstanceNormalization
 
 CROP_SHAPE = (256, 256)
 INPUT_SHAPE = CROP_SHAPE + (35 + 1,) # 35 labels, 1 boundary map
@@ -10,15 +11,6 @@ OUTPUT_SHAPE = CROP_SHAPE + (3,) # RGB image
 # Weight Initializers
 conv_init = tf.random_normal_initializer(0, 0.02)
 batchnorm_init = tf.random_normal_initializer(1.0, 0.02)
-
-instance_norm_num = 0
-def instance_norm(x, *args, **kwargs):
-	global instance_norm_num
-	rval = tf.keras.layers.Lambda(
-		lambda z: tf.contrib.layers.instance_norm(z, *args, **kwargs),
-		name='instance_norm_%d' % instance_norm_num)(x)
-	instance_norm_num += 1
-	return rval
 
 # Applies reflection padding to an image_batch
 refl_padding_num = 0
@@ -42,29 +34,29 @@ def downsample(img, i):
 
 def c7s1(x, k, activation, reflect_pad=True):    # 7×7 Convolution-InstanceNorm-Activation with k filters
     x = conv2D(x, k, 7, 1, reflect_pad=reflect_pad)
-    x = instance_norm(x, epsilon=1e-5)
+    x = InstanceNormalization(epsilon=1e-5)(x)
     x = tf.keras.layers.Activation(activation)(x)
     return x
 
 def d(x, k, reflect_pad=True):       # 3×3 Convolution-InstanceNorm-ReLU with k filters
     x = conv2D(x, k, 3, 2, reflect_pad=reflect_pad)
-    x = instance_norm(x, epsilon=1e-5)
+    x = InstanceNormalization(epsilon=1e-5)(x)
     x = tf.keras.layers.ReLU()(x)
     return x
 
 def R(x, k, reflect_pad=True):       # Residual block with 2 3×3 Convolution layers with k filters.
     y = x
     y = conv2D(y, k, 3, 1, reflect_pad=reflect_pad)
-    y = instance_norm(y, epsilon=1e-5)
+    y = InstanceNormalization(epsilon=1e-5)(y)
     y = tf.keras.layers.ReLU()(y)
     y = conv2D(y, k, 3, 1, reflect_pad=reflect_pad)
-    y = instance_norm(y, epsilon=1e-5)
+    y = InstanceNormalization(epsilon=1e-5)(y)
     y = tf.keras.layers.Add()([x, y])
     return y
 
 def u(x, k):       # 3×3 Transposed Convolution-InstanceNorm-ReLU layer with k filters.
     x = tf.keras.layers.Conv2DTranspose(k, (3, 3), strides=(2, 2), padding='same', kernel_initializer=conv_init)(x)
-    x = instance_norm(x, epsilon=1e-5)
+    x = InstanceNormalization(epsilon=1e-5)(x)
     x = tf.keras.layers.ReLU()(x)
     return x
 

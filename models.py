@@ -110,8 +110,8 @@ def define_global_generator(input_label_shape, output_channels, reflection_paddi
 
     last_feature_map = result
     #result = c7s1(result, output_channels, 'tanh', reflect_pad=reflection_padding)
-    result = conv2D(result, output_channels, 7, 1, reflect_pad=reflection_padding)
-    result = tf.keras.layers.Activation('sigmoid')(result)
+    #result = conv2D(result, output_channels, 7, 1, reflect_pad=reflection_padding)
+    #result = tf.keras.layers.Activation('sigmoid')(result)
     
     return tf.keras.Model(inputs=input_label, outputs=[result, last_feature_map])
 

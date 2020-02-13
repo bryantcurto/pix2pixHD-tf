@@ -165,11 +165,7 @@ def define_patch_discriminator(label_shape, target_shape):
     
     for i, (filters, stride) in enumerate(conv_units):
         result = conv(filters, stride)(result)
-        result = batchnorm()(result)
-        if 0 == i:
-            print "!!!!!!! WARNING: USING BATCH NORM !!!!!!!!"
-            print "PyTorch impl uses InstanceNormalization, but we are using batch size of 1 so."
-            sys.stdout.flush()
+        result = InstanceNormalization(epsilon=1e-5)(result)
         result = leaky_relu()(result)
         layers.append(result)
     

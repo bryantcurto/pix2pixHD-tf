@@ -21,11 +21,12 @@ def reflection_pad(image_batch, pad):
     refl_padding_num += 1
     return rval
 # A thin wrapper around conv2D that applies reflection_padding when required
-def conv2D(img, k, f, s, reflect_pad):
+def conv2D(img, k, f, s, reflect_pad, kernel_initializer=conv_init, bias_initializer='zeros'):
     pad_mode = 'valid' if reflect_pad else 'same'
     if reflect_pad: 
         img = reflection_pad(img, f//2)
-    return tf.keras.layers.Conv2D(k, (f, f), strides=(s, s), padding=pad_mode, kernel_initializer=conv_init)(img)
+    return tf.keras.layers.Conv2D(k, (f, f), strides=(s, s), padding=pad_mode, \
+								  kernel_initializer=kernel_initializer, bias_initializer=bias_initializer)(img)
 
 # Downsamples the image i times.
 def downsample(img, i):
@@ -115,7 +116,8 @@ def define_global_generator(input_label_shape, output_channels, reflection_paddi
     
     return tf.keras.Model(inputs=input_label, outputs=[result, last_feature_map])
 
-def define_enhancer_generator(input_label_shape, coarse_input_shape, output_channels, reflection_padding=True):
+def define_enhancer_generator(input_label_shape, coarse_input_shape, output_channels, reflection_padding=True, \
+							  last_conv_kernel_initializer=None, last_conv_bias_initializer=None):
     ''' Define the fine 'enhancer' generator. '''
 
     input_label = tf.keras.Input(shape=input_label_shape)    
@@ -130,7 +132,13 @@ def define_enhancer_generator(input_label_shape, coarse_input_shape, output_chan
         result = R(result, k, reflect_pad=reflection_padding)
     result = u(result, 32)
     #result = c7s1(result, output_channels, 'tanh', reflect_pad=reflection_padding)
-    result = conv2D(result, output_channels, 7, 1, reflect_pad=reflection_padding)
+
+    kwargs = dict()
+    if last_conv_kernel_initializer is not None:
+        kwargs['kernel_initializer'] = last_conv_kernel_initializer
+    if last_conv_bias_initializer is not None:
+        kwargs['bias_initializer'] = last_conv_bias_initializer
+    result = conv2D(result, output_channels, 7, 1, reflect_pad=reflection_padding, **kwargs)
     result = tf.keras.layers.Activation('sigmoid')(result)
 
     return tf.keras.Model(inputs=[input_label, coarse_feature_map], outputs=result)
